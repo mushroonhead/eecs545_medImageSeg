@@ -48,8 +48,8 @@ def create_groups(in_dir, out_dir, Number_slices):
             os.mkdir(output_path)
 
             # Move the slices into a specific folder so that you will save memory in your desk
-            for i, file in enumerate(glob(patient + '/*')):
-                if i == Number_slices + 1:
+            for i, file in enumerate(sorted(glob(patient + '/*'))):
+                if i == Number_slices:
                     break
                 
                 shutil.move(file, output_path)
