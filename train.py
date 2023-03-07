@@ -7,8 +7,8 @@ from preporcess import prepare
 from utilities import train
 
 
-data_dir = 'D:/Youtube/Organ and Tumor Segmentation/datasets/Task03_Liver/Data_Train_Test'
-model_dir = 'D:/Youtube/Organ and Tumor Segmentation/results/results' 
+data_dir = '../task_data'
+model_dir = '../task_results' 
 data_in = prepare(data_dir, cache=True)
 
 device = torch.device("cuda:0")
