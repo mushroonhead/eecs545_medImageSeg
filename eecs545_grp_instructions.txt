@@ -1,0 +1,30 @@
+######################################
+
+For members of EECS 545 group wondering how to start, please look through the following instructions and ask Joshua 
+for further assistence if required.
+
+######################################
+
+In general, 3 main files are used for data preperation, training and testing
+
+File 1: data_preperation.ipynb
+- Assumes that you have gone through the youtube video https://www.youtube.com/watch?v=M3ZWfamWrBM
+- Basically, you will need to create folders to store DICOMM series data from NIFTI data
+- After creating the DICOMM series data, you will use the tool to subsegment the data into equal size TestVolumes
+- Subsegmented data is then coverted back into NIFTI files
+- NIFTI data is then deployed into training and testing data sets to be used for training
+- You can follow through the script as you watch through the video. The script provides some useful tools to help with your work
+- Script also provides method to backtrack as required
+- At the end, you should have a folder structure as defined in 'data/readme.txt'. You can also refer to that file to see
+  the description of each folder in 'data'
+
+File 2: train.py
+- You can read through 'train.py' to understand how training is done
+- Run file using command $ python train.py 
+- Note: Takes really long using even on laptop with good GPU (7 hrs+ on laptop with RTX 3070 TI)
+
+File 3: testing.ipynb
+- File to run testing and inference of your trained model
+- Does have repeated steps in File 2 especially in defining the preprocessing step and the model (Note: these must be the same
+  as those in the training step for the results to be consistent)
+- Go through file to see how to pull training and testing metrics, as well as to run inference 

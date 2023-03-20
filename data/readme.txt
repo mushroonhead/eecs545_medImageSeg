@@ -24,7 +24,7 @@ File structure writeup
                 ...
             ...
     |-dicom_groups/ # folder to hold subdivided dicomm series files, moved from dicom_file
-        |-images/ # first folder holds dicomm serires from original CT scan that will be input to network
+        |-images/ # first folder holds dicomm serires from original CT scan that will be input to network (empty at first, folders automatically generated)
             |-liver_XX0_0/ # subdivided dicomm series will be in a seperate folder
                 |-IMG0000.dcm
                 |-IMG0001.dcm
@@ -34,7 +34,7 @@ File structure writeup
                 |-IMG00X1.dcm
                 ...
             ...
-        |-labels/ # second folder holds dicomm serires from segmentation mask that will be output from network
+        |-labels/ # second folder holds dicomm serires from segmentation mask that will be output from network (empty at first, folders automatically generated)
             |-liver_XX0_0/ # subdivided dicomm series will be in a seperate folder
                 |-IMG0000.dcm
                 |-IMG0001.dcm
@@ -44,7 +44,7 @@ File structure writeup
                 |-IMG00X1.dcm
                 ...
             ...
-    |-nifti_files # folder to hold the reconverted dicomm series subdivided dicom_groups using 3D Slicer
+    |-nifti_files # folder to hold the reconverted dicomm series subdivided dicom_groups
         |-images # first folder holds nifti from original CT scan that will be input to network (will be empty when data is moved to task_data)
             |-liver_X0_Y0.nii.gz
             |-liver_X0_Y1.nii.gz
