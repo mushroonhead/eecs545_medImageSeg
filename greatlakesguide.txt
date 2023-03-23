@@ -1,0 +1,10 @@
+Great Lakes Guide
+1. Ssh to <uniqname>@greatlakes.arc-ts.umich.edu
+2. Check available accounts with $my_accounts and remember 545 account for parameter in slurm job script
+3. Navigate to desired directory and run 
+4. git clone https://github.com/mushroonhead/eecs545_medImageSeg.git
+5. Move data to remote server with: scp <path to data on host> \ <uniqname>@greatlakes.arc-ts.umich.edu:/home/<uniqname>/<path to git repo>
+6. unzip data and move to data folder: unzip nifti_…_.zip -d /path/to/data
+7. Update data_dir and model_dir in train.py
+8. Complete preprocessing, training, and testing as normal
+9. You can add any commands below the comments in submit_job.sh
