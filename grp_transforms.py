@@ -4,6 +4,8 @@ Purpose:
 Stores all preprocessing transforms that the group have set up for easy access
 """
 
+import torch
+
 from monai.transforms import(
     Compose,
     AddChanneld,
@@ -51,14 +53,14 @@ def unet1_baseline_transforms():
         [
             LoadImaged(keys=["vol", "seg"]),
             AddChanneld(keys=["vol", "seg"]),
-            Spacingd(keys=["vol", "seg"], pixdim=(1.5,1.5,1.0), mode=("bilinear", "nearest")),
+            # Spacingd(keys=["vol", "seg"], pixdim=(1.5,1.5,1.0), mode=("bilinear", "nearest")), # temp remove spacing due to errant affine data
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
             ScaleIntensityRanged(keys=["vol"], a_min=-200, a_max=200,b_min=0.0, b_max=1.0, clip=True), 
             CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
             Resized(keys=["vol", "seg"], spatial_size=[128,128,64]),
             # LabelToMaskd(keys=["seg"], select_labels=[1,2]) # set labels [1, 2] to be mask ## did not work well due to non continuous data
             ThresholdIntensityd(keys=["seg"], threshold=1, above=False, cval=1), # convert 2s to 1s in seg mask
-            ToTensord(keys=["vol", "seg"]),
+            ToTensord(keys=["vol", "seg"], dtype=torch.float32),
         ]
     )
 
@@ -73,13 +75,13 @@ def unet2_baseline_transforms():
         [
             LoadImaged(keys=["vol", "seg"]),
             AddChanneld(keys=["vol", "seg"]),
-            Spacingd(keys=["vol", "seg"], pixdim=(1.5,1.5,1.0), mode=("bilinear", "nearest")),
+            # Spacingd(keys=["vol", "seg"], pixdim=(1.5,1.5,1.0), mode=("bilinear", "nearest")), # temp remove spacing due to errant affine data
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
+            MaskIntensityd(keys=["vol"], mask_key="seg"), # mask out regions that are not liver
+            LabelToMaskd(keys=["seg"], select_labels=[2]), # set labels [2] to be mask
             ScaleIntensityRanged(keys=["vol"], a_min=-200, a_max=200,b_min=0.0, b_max=1.0, clip=True), 
             CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
             Resized(keys=["vol", "seg"], spatial_size=[128,128,64]),
-            MaskIntensityd(keys=["vol"], mask_key="seg"), # mask out regions that are not liver
-            LabelToMaskd(keys=["seg"], select_labels=[2]), # set labels [2] to be mask
-            ToTensord(keys=["vol", "seg"]),
+            ToTensord(keys=["vol", "seg"], dtype=torch.float32),
         ]
     ) ##TODO: consider if should crop foreground after getting liver data -> for now no to make data passing between UNets easier
