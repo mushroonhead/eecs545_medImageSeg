@@ -48,7 +48,7 @@ class ConvertToMultiChannelBasedOnLiverClassesd(MapTransform):
         return d
     
 # Data preparation and augmentation for liver and tumor segementation
-def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_size=[128,128,64], multi_states=False):
+def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_size=[128,128,64], one_state=False):
     '''
     In this function we perfrom data augmentation of the full nii files.
     The training ds is augmented with random cropping of the original data set and scale to the stipulated spatial size, 
@@ -70,15 +70,15 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_
     train_files = [{"vol": image_name, "seg": label_name} for image_name, label_name in zip(path_train_volumes, path_train_segmentation)]
     val_files = [{"vol": image_name, "seg": label_name} for image_name, label_name in zip(path_val_volumes, path_val_segmentation)]
     
-    if multi_states:
+    if (one_state==False):
         train_transforms = Compose([
             LoadImaged(keys=["vol", "seg"]),
             EnsureChannelFirstd(keys="vol"),
             EnsureTyped(keys=["vol", "seg"]),
+            ConvertToMultiChannelBasedOnLiverClassesd(keys="seg"),
             ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True), 
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
             Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-            RandCropByPosNegLabeld(keys=["vol", "seg"], label_key="seg", spatial_size=spatial_size, pos=1, neg=1, num_samples=4, image_key="vol", image_threshold=0),
             RandSpatialCropd(keys=["vol", "seg"], roi_size=spatial_size, random_size=False),
             RandAffined(keys=["vol", "seg"], mode=('bilinear', 'nearest'), prob=1.0, spatial_size=spatial_size, rotate_range=(0, 0, np.pi/15), scale_range=(0.1, 0.1, 0.1)),
             #RandGaussianNoised(keys=["vol"], prob=0.15, std=0.01),
@@ -91,6 +91,8 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_
         val_transforms = Compose([
             LoadImaged(keys=["vol", "seg"]),
             EnsureChannelFirstd(keys=["vol", "seg"]),
+            EnsureTyped(keys=["vol", "seg"]),
+            ConvertToMultiChannelBasedOnLiverClassesd(keys="seg"),
             ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max,b_min=0.0, b_max=1.0, clip=True),            
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
             Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
@@ -105,9 +107,7 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_
             CropForegroundd(keys=["vol", "seg"], source_key="vol"),
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
             Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-            ThresholdIntensityd(keys=["seg"], threshold=1, above=False, cval=1), 
             RandCropByPosNegLabeld(keys=["vol", "seg"], label_key="seg", spatial_size=spatial_size, pos=1, neg=1, num_samples=4, image_key="vol", image_threshold=0),
-            RandSpatialCropd(keys=["vol", "seg"], roi_size=spatial_size, random_size=False),
             RandAffined(keys=["vol", "seg"], mode=('bilinear', 'nearest'), prob=1.0, spatial_size=spatial_size, rotate_range=(0, 0, np.pi/15), scale_range=(0.1, 0.1, 0.1)),
             #RandGaussianNoised(keys=["vol"], prob=0.15, std=0.01),
             RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
@@ -122,15 +122,14 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_
             ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max,b_min=0.0, b_max=1.0, clip=True),            
             Orientationd(keys=["vol", "seg"], axcodes="RAS"),
             Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-            ThresholdIntensityd(keys=["seg"], threshold=1, above=False, cval=1),
             CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
             ToTensord(keys=["vol", "seg"]),
             ])
 
-    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=1.0)
+    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=0.0)
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0)
+    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=0.0)
     val_loader = DataLoader(val_ds, batch_size=1)
 
     return train_loader, val_loader
@@ -138,12 +137,12 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, spatial_
 
 
 # Dice metric
-def dice_metric(predicted, target, multi_states=False):
+def dice_metric(predicted, target, one_state=False):
     '''
     In this function we take `predicted` and `target` (label) to calculate the dice coeficient then we use it 
     to calculate a metric value for the training and the validation.
     '''
-    dice_value = DiceLoss(to_onehot_y=multi_states, sigmoid=True, squared_pred=True)
+    dice_value = DiceLoss(to_onehot_y=one_state, sigmoid=True, squared_pred=True)
     value = 1 - dice_value(predicted, target).item()
     return value
 
@@ -158,11 +157,11 @@ if __name__ == '__main__':
     max_epochs = 200
     val_interval = 1
     use_lr_sch = False
-    multi_states = True
+    one_state = False
     resunet = True
 
     # Augment data
-    data_in = augment_data(data_dir)
+    data_in = augment_data(data_dir,one_state=one_state)
 
     # Create resunet 
     device = torch.device("cuda:0")
@@ -181,7 +180,7 @@ if __name__ == '__main__':
     ).to(device)
 
     # Loss function DICE and ADAM optimizer
-    loss = DiceLoss(to_onehot_y=multi_states, sigmoid=True, squared_pred=True)
+    loss = DiceLoss(to_onehot_y=one_state, sigmoid=True, squared_pred=True)
     optimizer = torch.optim.Adam(model.parameters(), 1e-4, weight_decay=1e-5, amsgrad=True)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     scaler = torch.cuda.amp.GradScaler()
@@ -215,16 +214,18 @@ if __name__ == '__main__':
             volume, label = (volume.to(device), label.to(device))
 
             optimizer.zero_grad()
-            outputs = model(volume)
+
+            with torch.cuda.amp.autocast():  
+                outputs = model(volume)
+                train_loss = loss(outputs, label)
             
-            train_loss = loss(outputs, label)
-            
-            train_loss.backward()
-            optimizer.step()
+            scaler.scale(train_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             train_epoch_loss += train_loss.item()
 
-            train_metric = dice_metric(outputs, label, multi_states=multi_states)
+            train_metric = dice_metric(outputs, label, one_state=one_state)
             epoch_metric_train += train_metric
             print(
                 f"{train_step}/{len(train_loader) // train_loader.batch_size}, "
@@ -261,11 +262,12 @@ if __name__ == '__main__':
                     val_volume, val_label = (val_data["vol"].to(device), val_data["seg"].to(device))
                     roi_size = (128, 128, 64)
                     sw_batch_size = 4
-                    val_outputs = sliding_window_inference(val_volume, roi_size, sw_batch_size, model)
+                    with torch.cuda.amp.autocast():  
+                        val_outputs = sliding_window_inference(val_volume, roi_size, sw_batch_size, model)
                     
                     val_loss = loss(val_outputs, val_label)
                     val_epoch_loss += val_loss.item()
-                    val_metric = dice_metric(val_outputs, val_label, multi_states=multi_states)
+                    val_metric = dice_metric(val_outputs, val_label, one_state=one_state)
                     epoch_metric_val += val_metric
                     
                 
