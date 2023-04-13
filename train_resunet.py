@@ -1,6 +1,6 @@
 from monai.networks.nets import UNet
 from monai.networks.layers import Norm
-from monai.data import DataLoader, CacheDataset
+from monai.data import DataLoader, CacheDataset, decollate_batch
 from monai.utils import set_determinism
 from monai.losses import DiceLoss
 from monai.inferers import sliding_window_inference
@@ -12,15 +12,16 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityRanged,
     CropForegroundd,
-    ThresholdIntensityd,
     EnsureChannelFirstd,
     RandCropByPosNegLabeld,
     RandAffined,
-    RandGaussianNoised,
+    #RandGaussianNoised,
     RandFlipd,
     MapTransform,
     RandSpatialCropd,
     EnsureTyped,
+    Activations,
+    AsDiscrete,
 )
 
 import torch
@@ -188,6 +189,7 @@ if __name__ == '__main__':
     
     # Do typical training 
     # Instantiate
+    post_trans = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
     best_metric = -1
     best_metric_epoch = -1
     save_loss_train = []
@@ -261,10 +263,11 @@ if __name__ == '__main__':
 
                     val_volume, val_label = (val_data["vol"].to(device), val_data["seg"].to(device))
                     roi_size = (128, 128, 64)
-                    sw_batch_size = 4
+                    sw_batch_size = 1
                     with torch.cuda.amp.autocast():  
                         val_outputs = sliding_window_inference(val_volume, roi_size, sw_batch_size, model)
                     
+                    val_outputs = [post_trans(i) for i in decollate_batch(val_outputs)]
                     val_loss = loss(val_outputs, val_label)
                     val_epoch_loss += val_loss.item()
                     val_metric = dice_metric(val_outputs, val_label, one_state=one_state)
