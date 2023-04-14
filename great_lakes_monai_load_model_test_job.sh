@@ -13,5 +13,5 @@ module purge
 module load python
 
 source /home/joshmah/eecs545_med_image_seg/med_seg_env/bin/activate
-python3 great_lakes_test.py
+python3 great_lakes_monai_load_model_test.py
 deactivate
