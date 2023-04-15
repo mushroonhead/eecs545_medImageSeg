@@ -1,4 +1,3 @@
-print("Instantiation")
 from monai.networks.nets import UNet
 from monai.networks.layers import Norm
 from monai.data import DataLoader, CacheDataset, decollate_batch
@@ -20,12 +19,12 @@ from monai.transforms import(
     AsDiscrete,
     ToTensord,
 )
-print("Monai Done")
 
 import torch
 import os
 from glob import glob
 import numpy as np
+print("Instantiated")
 
 
 # Data preparation and augmentation for liver and tumor segementation
@@ -56,8 +55,8 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 2.0), a_min=-200, a_max=200, spatial_
         EnsureChannelFirstd(keys=["vol", "seg"]),
         ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True),
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
-        Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         CropForegroundd(keys=["vol", "seg"], source_key="vol"), 
+        Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         RandSpatialCropd(keys=["vol", "seg"], roi_size=spatial_size, random_size=False),
         RandAffined(keys=["vol", "seg"], mode=('bilinear', 'nearest'), prob=1.0, spatial_size=spatial_size, rotate_range=(0, 0, np.pi/15), scale_range=(0.1, 0.1, 0.1)),
         RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
@@ -73,14 +72,13 @@ def augment_data(in_dir, pixdim=(1.5, 1.5, 2.0), a_min=-200, a_max=200, spatial_
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-        RandSpatialCropd(keys=["vol", "seg"], roi_size=spatial_size, random_size=False),
         ToTensord(keys=["vol", "seg"]),
         ])
 
     train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=0.0)   
     train_loader = DataLoader(train_ds, batch_size=1, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=0.0)
+    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=1.0)
     val_loader = DataLoader(val_ds, batch_size=1)
 
     return train_loader, val_loader
@@ -149,7 +147,6 @@ if __name__ == '__main__':
         epoch_metric_train = 0
         
         # Train from training ds
-        print("Do training")
         for batch_data in train_loader:
             
             train_step += 1
@@ -168,9 +165,9 @@ if __name__ == '__main__':
             scaler.update()
             train_epoch_loss += train_loss.item()
 
-            print(
-                f"{train_step}/{len(train_loader) // train_loader.batch_size}, "
-                f"loss: {train_loss.item():.4f}")
+            #print(
+            #    f"{train_step}/{len(train_loader) // train_loader.batch_size}, "
+            #    f"loss: {train_loss.item():.4f}")
         
         # Compute epoch loss 
         train_epoch_loss /= train_step
@@ -181,12 +178,10 @@ if __name__ == '__main__':
         if use_lr_sch :
             lr_scheduler.step()
 
-        print("-" * 20)
         print(f"current epoch: {epoch + 1}, training loss: {train_epoch_loss:.4f}")
 
         # Perform inference with val ds
         if (epoch + 1) % val_interval == 0:
-            print("Do validation")
             model.eval()
             with torch.no_grad():
                 val_epoch_loss = 0
@@ -230,9 +225,8 @@ if __name__ == '__main__':
                     f"\nbest mean dice: {best_metric:.4f} "
                     f"at epoch: {best_metric_epoch}"
                 )
-
+                print("-" * 20)
     # Complete training
     print(
         f"train completed, best_metric: {best_metric:.4f} "
         f"at epoch: {best_metric_epoch}")  
-
