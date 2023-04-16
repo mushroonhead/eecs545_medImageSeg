@@ -27,7 +27,8 @@ from monai.transforms import(
     RandSpatialCropd,
     Activations,
     AsDiscrete,
-    CropForegroundd
+    CropForegroundd,
+    Resized,
 )
 
     
@@ -76,6 +77,7 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
+        Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
         ToTensord(keys=["vol", "seg"]),
         ])
 
