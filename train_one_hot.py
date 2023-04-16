@@ -50,7 +50,7 @@ Return:
     - labels: tensor multiclass of size (B,2,R,A,S)
 ------------------------------------------------------------------    
 """
-def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[128,128,64], cache_rate=0.0):
+def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[128,128,64], cache_rate=0.0, train_batch_size=1, val_batch_size=1):
 
     path_train_volumes = sorted(glob(os.path.join(in_dir, "TrainVolumes_full", "*.nii.gz")))
     path_train_segmentation = sorted(glob(os.path.join(in_dir, "TrainLabels_full", "*.nii.gz")))
@@ -87,11 +87,11 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         ToTensord(keys=["vol", "seg"]),
         ])
 
-    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=cache_rate)
-    train_loader = DataLoader(train_ds, batch_size=1, shuffle=True)
+    train_ds = CacheDataset(data=train_files[74:85], transform=train_transforms, cache_rate=cache_rate)
+    train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=cache_rate)
-    val_loader = DataLoader(val_ds, batch_size=1)
+    val_ds = CacheDataset(data=val_files[:5], transform=val_transforms, cache_rate=cache_rate)
+    val_loader = DataLoader(val_ds, batch_size=val_batch_size)
 
     return train_loader, val_loader
 
@@ -131,7 +131,7 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, devic
 
             # Gradient solver and compute training loss
             optimizer.zero_grad()
-
+            
             with torch.cuda.amp.autocast():  
                 outputs = model(volume)
                 train_loss = criterion(outputs, label) 
@@ -225,7 +225,7 @@ def main_worker(args):
 
     
     # load dataset
-    train_loader, val_loader = data_augment(args.data_dir,cache_rate=args.cache_rate)
+    train_loader, val_loader = data_augment(args.data_dir,cache_rate=args.cache_rate, train_batch_size=args.train_batch_size, val_batch_size=args.val_batch_size)
 
     
     # Create net
@@ -330,16 +330,17 @@ Main
 """
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--data_dir", default="../task_data", type=str, help="directory of Patient CT scans dataset")
-    parser.add_argument("-m", "--model_dir", default="../task_results", type=str, help="directory of train results")
+    parser.add_argument("-d", "--data_dir", default="data/task_data", type=str, help="directory of Patient CT scans dataset")
+    parser.add_argument("-m", "--model_dir", default="data/task_results", type=str, help="directory of train results")
     parser.add_argument("--epochs", default=500, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--lr", default=1e-3, type=float, help="learning rate")
     parser.add_argument("--seed", default=None, type=int, help="seed for initializing training.")
     parser.add_argument("--cache_rate", type=float, default=0.0, help="larger cache rate relies on enough GPU memory.")
     parser.add_argument("--val_interval", type=int, default=20)
+    parser.add_argument("--train_batch_size", type=int, default=1, help="training batch size for data loader.")
+    parser.add_argument("--val_batch_size", type=int, default=1, help="validation batch size for data loader.")
     parser.add_argument("--network", type=str, default="SegResNet", choices=["ResUNet", "SegResNet", "UNet"])
     args = parser.parse_args()
-
 
     if args.seed is not None:
         set_determinism(seed=args.seed)
