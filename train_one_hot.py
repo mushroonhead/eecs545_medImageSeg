@@ -87,10 +87,10 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         ToTensord(keys=["vol", "seg"]),
         ])
 
-    train_ds = CacheDataset(data=train_files[74:85], transform=train_transforms, cache_rate=cache_rate)
+    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=cache_rate)
     train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files[:5], transform=val_transforms, cache_rate=cache_rate)
+    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=cache_rate)
     val_loader = DataLoader(val_ds, batch_size=val_batch_size)
 
     return train_loader, val_loader
