@@ -33,6 +33,7 @@ from monai.transforms import(
     CropForegroundd,
     Resized
 )
+from grp_transforms import ForceSyncAffined
 
     
 """
@@ -62,6 +63,7 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
 
     train_transforms = Compose([
         LoadImaged(keys=["vol", "seg"]),
+        ForceSyncAffined(keys=["seg"], source_key="vol"),
         EnsureChannelFirstd(keys=["vol", "seg"]),
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
@@ -75,6 +77,7 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
 
     val_transforms = Compose([
         LoadImaged(keys=["vol", "seg"]),
+        ForceSyncAffined(keys=["seg"], source_key="vol"),
         EnsureChannelFirstd(keys=["vol", "seg"]),
         ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max,b_min=0.0, b_max=1.0, clip=True),            
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),

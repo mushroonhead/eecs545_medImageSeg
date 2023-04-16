@@ -5,8 +5,9 @@ Stores all preprocessing transforms that the group have set up for easy access
 """
 
 import torch
-
+from monai.config import KeysCollection
 from monai.transforms import(
+    MapTransform,
     Compose,
     AddChanneld,
     LoadImaged,
@@ -21,6 +22,24 @@ from monai.transforms import(
     ThresholdIntensityd,
     LabelToMaskd,
 )
+
+class ForceSyncAffined(MapTransform):
+    """
+    Forcefully set affines of targets to source's affine
+    Mainly for fixing bad data points
+    """
+
+    def __init__(self, keys: KeysCollection, source_key: str, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+        self.source_key = source_key    
+
+    def __call__(self, data):
+        d = dict(data)
+        assert self.source_key in d, f"Source key {self.source_key} not in data point."
+        s_data_affine = d[self.source_key].affine
+        for key in self.key_iterator(d):
+            d[key].affine = s_data_affine
+        return d
 
 
 def default_transforms():
