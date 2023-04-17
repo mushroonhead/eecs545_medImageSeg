@@ -41,6 +41,19 @@ class ForceSyncAffined(MapTransform):
             d[key].affine = s_data_affine
         return d
 
+class Roundd(MapTransform):
+    """
+    Rounds target data to the closest whole number
+    """
+
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.key_iterator(d):
+            d[key] = torch.round(d[key])
+        return d
 
 def default_transforms():
     """
