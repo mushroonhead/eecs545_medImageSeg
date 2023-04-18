@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from monai.networks.nets import SegResNet, UNet
+from monai.config import KeysCollection
 from monai.networks.layers import Norm
 from monai.data import DataLoader, CacheDataset, decollate_batch
 from monai.utils import set_determinism
@@ -23,15 +24,52 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityRanged,
     EnsureChannelFirstd,
-    RandFlipd,
     RandSpatialCropd,
     Activations,
     AsDiscrete,
     CropForegroundd,
     Resized,
+    MapTransform,
 )
 
+"""
+------------------------------------------------------------------
+Customised transform classes
+------------------------------------------------------------------    
+"""
+class ForceSyncAffined(MapTransform):
+    """
+    Forcefully set affines of targets to source's affine
+    Mainly for fixing bad data points
+    """
+
+    def __init__(self, keys: KeysCollection, source_key: str, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+        self.source_key = source_key    
+
+    def __call__(self, data):
+        d = dict(data)
+        assert self.source_key in d, f"Source key {self.source_key} not in data point."
+        s_data_affine = d[self.source_key].affine
+        for key in self.key_iterator(d):
+            d[key].affine = s_data_affine
+        return d
+
+class Roundd(MapTransform):
+    """
+    Rounds target data to the closest whole number
+    """
+
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.key_iterator(d):
+            d[key] = torch.round(d[key])
+        return d    
     
+
 """
 ------------------------------------------------------------------
 Data agumentation and transformation
@@ -46,7 +84,7 @@ Return:
     - labels: tensor multiclass of size (B,2,R,A,S)
 ------------------------------------------------------------------    
 """
-def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[128,128,64], cache_rate=0.0):
+def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=(256,256,64), cache_rate=0.0):
 
     path_train_volumes = sorted(glob(os.path.join(in_dir, "TrainVolumes_full", "*.nii.gz")))
     path_train_segmentation = sorted(glob(os.path.join(in_dir, "TrainLabels_full", "*.nii.gz")))
@@ -59,25 +97,28 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
 
     train_transforms = Compose([
         LoadImaged(keys=["vol", "seg"]),
+        ForceSyncAffined(keys=["seg"], source_key="vol"),
         EnsureChannelFirstd(keys=["vol", "seg"]),
+        ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True),
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-        RandSpatialCropd(keys=["vol", "seg"], roi_size=roi_size, random_size=False),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=1, prob=0.5),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=2, prob=0.5),
-        ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True),
+        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
+        RandSpatialCropd(keys=["vol", "seg"], roi_size=[-1,-1,roi_size[2]], random_size=False),
+        Resized(keys=["vol", "seg"], spatial_size=roi_size),
+        Roundd(keys="seg"),
         ToTensord(keys=["vol", "seg"]),
         ])
 
     val_transforms = Compose([
         LoadImaged(keys=["vol", "seg"]),
+        ForceSyncAffined(keys=["seg"], source_key="vol"),
         EnsureChannelFirstd(keys=["vol", "seg"]),
         ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max,b_min=0.0, b_max=1.0, clip=True),            
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
-        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
+        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
+        Roundd(keys="seg"),
         ToTensord(keys=["vol", "seg"]),
         ])
 
@@ -126,7 +167,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------    
 """
-def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(128,128,64)):
+def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(256,256,64)):
 
     model.train()
     epoch_loss = 0
@@ -140,7 +181,9 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, devic
         label = batch_data["seg"]
         label_tf = convert_label_to_liver_classes(label)
     
-        if ((label_tf.size(dim=2) == roi_size[0]) and (label_tf.size(dim=3) == roi_size[1]) and (label_tf.size(dim=4) == roi_size[2])):
+        check_label_size = ((label.size(dim=2) == roi_size[0]) and (label.size(dim=3) == roi_size[1]) and (label.size(dim=4) == roi_size[2]))
+        check_affine =  torch.all(volume.affine == label.affine)
+        if (check_affine and check_label_size):
             volume, label = (volume.to(device), label_tf.to(device))
 
             # Gradient solver and compute training loss
@@ -183,7 +226,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------
 """
-def evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, device):
+def evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, device, roi_size=(256,256,64), sw_batch_size=1):
     
     model.eval()
 
@@ -192,9 +235,6 @@ def evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, devi
             val_volume = val_data["vol"]
             val_label = val_data["seg"]
             val_volume, val_label = (val_volume.to(device), val_label.to(device))
-            
-            roi_size = (128, 128, 64)
-            sw_batch_size = 1
 
             with torch.cuda.amp.autocast():  
                 val_outputs = sliding_window_inference(val_volume, roi_size, sw_batch_size, model, overlap=0.5)
@@ -242,7 +282,6 @@ def main_worker(args):
     scaler = torch.cuda.amp.GradScaler()
     # Enable cuDNN benchmark
     torch.backends.cudnn.benchmark = True
-
     
     # load dataset
     train_loader, val_loader = data_augment(args.data_dir,cache_rate=args.cache_rate)
@@ -306,6 +345,9 @@ def main_worker(args):
     save_metric = []
     save_metric_liver = []
     save_metric_tumor = []
+    metric = 0.0
+    metric_liver = 0.0
+    metric_tumor = 0.0
 
     train_start = time.time()
     for epoch in range(args.epochs):
@@ -321,25 +363,25 @@ def main_worker(args):
         if (epoch + 1) % args.val_interval == 0:
             metric, metric_liver, metric_tumor = evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, device)
             
-            # save metrics
-            save_metric.append(metric)
-            save_metric_liver.append(metric_liver)
-            save_metric_tumor.append(metric_tumor)
-            np.save(os.path.join(model_dir, 'metric_mean.npy'), save_metric)
-            np.save(os.path.join(model_dir, 'metric_liver.npy'), save_metric_liver)
-            np.save(os.path.join(model_dir, 'metric_tumor.npy'), save_metric_tumor)
+        # save metrics
+        save_metric.append(metric)
+        save_metric_liver.append(metric_liver)
+        save_metric_tumor.append(metric_tumor)
+        np.save(os.path.join(model_dir, 'metric_mean.npy'), save_metric)
+        np.save(os.path.join(model_dir, 'metric_liver.npy'), save_metric_liver)
+        np.save(os.path.join(model_dir, 'metric_tumor.npy'), save_metric_tumor)
 
-            # save model with best metric
-            if metric > best_metric:
-                best_metric = metric
-                best_metric_epoch = epoch + 1
-                torch.save(model.state_dict(), 
-                           os.path.join(model_dir, "best_metric_model.pth"))
-            print(
-                f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
-                f" liver: {metric_liver:.4f} tumor: {metric_tumor:.4f}"
-                f"\nbest mean dice: {best_metric:.4f} at epoch: {best_metric_epoch}"
-            )
+        # save model with best metric
+        if metric > best_metric:
+            best_metric = metric
+            best_metric_epoch = epoch + 1
+            torch.save(model.state_dict(), 
+                        os.path.join(model_dir, "best_metric_model.pth"))
+        print(
+            f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
+            f" liver: {metric_liver:.4f} tumor: {metric_tumor:.4f}"
+            f"\nbest mean dice: {best_metric:.4f} at epoch: {best_metric_epoch}"
+        )
     
         print(f"time consumed for epoch {epoch + 1} is: {(time.time() - epoch_start):.4f}")
 
@@ -359,11 +401,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--data_dir", default="../task_data", type=str, help="directory of Patient CT scans dataset")
     parser.add_argument("-m", "--model_dir", default="../task_results", type=str, help="directory of train results")
-    parser.add_argument("--epochs", default=300, type=int, metavar="N", help="number of total epochs to run")
+    parser.add_argument("--epochs", default=800, type=int, metavar="N", help="number of total epochs to run")
     parser.add_argument("--lr", default=1e-4, type=float, help="learning rate")
     parser.add_argument("--seed", default=None, type=int, help="seed for initializing training.")
     parser.add_argument("--cache_rate", type=float, default=0.0, help="larger cache rate relies on enough GPU memory.")
-    parser.add_argument("--val_interval", type=int, default=20)
+    parser.add_argument("--val_interval", type=int, default=5)
     parser.add_argument("--network", type=str, default="SegResNet", choices=["ResUNet", "SegResNet", "UNet"])
     args = parser.parse_args()
 
