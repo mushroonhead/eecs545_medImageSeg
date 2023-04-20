@@ -30,6 +30,8 @@ from monai.transforms import(
     CropForegroundd,
     Resized,
     MapTransform,
+    RandFlipd,
+    RandRotated,
 )
 
 """
@@ -53,22 +55,7 @@ class ForceSyncAffined(MapTransform):
         s_data_affine = d[self.source_key].affine
         for key in self.key_iterator(d):
             d[key].affine = s_data_affine
-        return d
-
-class Roundd(MapTransform):
-    """
-    Rounds target data to the closest whole number
-    """
-
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
-        super().__init__(keys, allow_missing_keys)
-
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.key_iterator(d):
-            d[key] = torch.round(d[key])
         return d    
-    
 
 """
 ------------------------------------------------------------------
@@ -84,7 +71,7 @@ Return:
     - labels: tensor multiclass of size (B,2,R,A,S)
 ------------------------------------------------------------------    
 """
-def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=(256,256,64), cache_rate=0.0):
+def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=(128,128,64), cache_rate=0.0):
 
     path_train_volumes = sorted(glob(os.path.join(in_dir, "TrainVolumes_full", "*.nii.gz")))
     path_train_segmentation = sorted(glob(os.path.join(in_dir, "TrainLabels_full", "*.nii.gz")))
@@ -104,8 +91,11 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         RandSpatialCropd(keys=["vol", "seg"], roi_size=[-1,-1,roi_size[2]], random_size=False),
+        RandFlipd(keys=["vol", "seg"], prob=0.5, spatial_axis=0),
+        RandFlipd(keys=["vol", "seg"], prob=0.5, spatial_axis=1),
+        RandFlipd(keys=["vol", "seg"], prob=0.5, spatial_axis=2),
+        RandRotated(keys=["vol", "seg"], prob=0.5, range_x=[0.2,0.2], mode=['bilinear', 'nearest']),
         Resized(keys=["vol", "seg"], spatial_size=roi_size),
-        Roundd(keys="seg"),
         ToTensord(keys=["vol", "seg"]),
         ])
 
@@ -118,7 +108,6 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
-        Roundd(keys="seg"),
         ToTensord(keys=["vol", "seg"]),
         ])
 
@@ -167,7 +156,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------    
 """
-def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(256,256,64)):
+def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(128,128,64)):
 
     model.train()
     epoch_loss = 0
@@ -226,7 +215,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------
 """
-def evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, device, roi_size=(256,256,64), sw_batch_size=1):
+def evaluate(val_loader, model, dice_metric, dice_metric_batch, post_trans, device, roi_size=(128,128,64), sw_batch_size=1):
     
     model.eval()
 
