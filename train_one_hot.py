@@ -14,6 +14,7 @@ import torch
 
 from monai.networks.nets import SegResNet, UNet
 from monai.networks.layers import Norm
+from monai.config import KeysCollection
 from monai.data import DataLoader, CacheDataset, decollate_batch
 from monai.utils import set_determinism
 from monai.losses import DiceLoss, GeneralizedDiceLoss
@@ -27,16 +28,47 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityRanged,
     EnsureChannelFirstd,
-    RandFlipd,
     RandSpatialCropd,
     RandRotated,
     AsDiscrete,
     CropForegroundd,
     Resized,
-    Activations
+    Activations,
+    MapTransform,
 )
 from grp_transforms import ForceSyncAffined, Roundd
 
+class ForceSyncAffined(MapTransform):
+    """
+    Forcefully set affines of targets to source's affine
+    Mainly for fixing bad data points
+    """
+
+    def __init__(self, keys: KeysCollection, source_key: str, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+        self.source_key = source_key    
+
+    def __call__(self, data):
+        d = dict(data)
+        assert self.source_key in d, f"Source key {self.source_key} not in data point."
+        s_data_affine = d[self.source_key].affine
+        for key in self.key_iterator(d):
+            d[key].affine = s_data_affine
+        return d
+    
+class Roundd(MapTransform):
+    """
+    Rounds target data to the closest whole number
+    """
+
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
+        super().__init__(keys, allow_missing_keys)
+
+    def __call__(self, data):
+        d = dict(data)
+        for key in self.key_iterator(d):
+            d[key] = torch.round(d[key])
+        return d    
     
 """
 ------------------------------------------------------------------
@@ -52,7 +84,7 @@ Return:
     - labels: tensor multiclass of size (B,2,R,A,S)
 ------------------------------------------------------------------    
 """
-def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[-1,-1,64], model_inp_size=[128,128,-1], cache_rate=0.0, train_batch_size=1, val_batch_size=1):
+def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=(256,256,64), cache_rate=0.0):
 
     path_train_volumes = sorted(glob(os.path.join(in_dir, "TrainVolumes_full", "*.nii.gz")))
     path_train_segmentation = sorted(glob(os.path.join(in_dir, "TrainLabels_full", "*.nii.gz")))
@@ -72,7 +104,7 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         RandSpatialCropd(keys=["vol", "seg"], roi_size=roi_size, random_size=False),
-        Resized(keys=["vol", "seg"], spatial_size=model_inp_size),
+        Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
         # RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
         # RandFlipd(keys=["vol", "seg"], spatial_axis=1, prob=0.5),
         # RandFlipd(keys=["vol", "seg"], spatial_axis=2, prob=0.5),
@@ -87,18 +119,18 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         EnsureChannelFirstd(keys=["vol", "seg"]),
         ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max,b_min=0.0, b_max=1.0, clip=True),            
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
-        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-        Resized(keys=["vol", "seg"], spatial_size=model_inp_size),
-        Roundd(keys=["seg"]),
+        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
+        Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
+        Roundd(keys="seg"),
         ToTensord(keys=["vol", "seg"]),
         ])
 
-    train_ds = CacheDataset(data=train_files[28:56], transform=train_transforms, cache_rate=cache_rate)
-    train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True)
+    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=cache_rate)
+    train_loader = DataLoader(train_ds, batch_size=1, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files[:4], transform=val_transforms, cache_rate=cache_rate)
-    val_loader = DataLoader(val_ds, batch_size=val_batch_size)
+    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=cache_rate)
+    val_loader = DataLoader(val_ds, batch_size=1)
 
     return train_loader, val_loader
 
@@ -120,7 +152,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------    
 """
-def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(128,128,64)):
+def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, device, roi_size=(256,256,64)):
 
     model.train()
     epoch_loss = 0
@@ -132,13 +164,15 @@ def train(train_loader, model, criterion, optimizer, lr_scheduler, scaler, devic
         batch_num += 1
         volume = batch_data["vol"]
         label = batch_data["seg"]
-    
-        if ((label.size(dim=2) == roi_size[0]) and (label.size(dim=3) == roi_size[1]) and (label.size(dim=4) == roi_size[2])):
+
+        check_label_size = ((label.size(dim=2) == roi_size[0]) and (label.size(dim=3) == roi_size[1]) and (label.size(dim=4) == roi_size[2]))
+        check_affine =  torch.all(volume.affine == label.affine)
+        if (check_affine and check_label_size):
             volume, label = (volume.to(device), label.to(device))
 
             # Gradient solver and compute training loss
             optimizer.zero_grad()
-            
+
             with torch.cuda.amp.autocast():  
                 outputs = model(volume)
                 train_loss = criterion(outputs, label) 
@@ -176,7 +210,7 @@ Return:
     - epoch loss
 ------------------------------------------------------------------
 """
-def evaluate(val_loader, model, dice_metric, pre_trans, post_trans, device):
+def evaluate(val_loader, model, dice_metric, pre_trans, post_trans, device, roi_size=(256,256,64), sw_batch_size=1):
     
     model.eval()
 
@@ -186,9 +220,6 @@ def evaluate(val_loader, model, dice_metric, pre_trans, post_trans, device):
             val_label = val_data["seg"]
             val_volume, val_label = (val_volume.to(device), val_label.to(device))
             
-            roi_size = (128, 128, 64)
-            sw_batch_size = 1
-
             with torch.cuda.amp.autocast():  
                 val_outputs = sliding_window_inference(val_volume, roi_size, sw_batch_size, model, overlap=0.5)
 
@@ -232,7 +263,7 @@ def main_worker(args):
 
     
     # load dataset
-    train_loader, val_loader = data_augment(args.data_dir,cache_rate=args.cache_rate, train_batch_size=args.train_batch_size, val_batch_size=args.val_batch_size)
+    train_loader, val_loader = data_augment(args.data_dir,cache_rate=args.cache_rate)
 
     
     # Create net
@@ -273,15 +304,15 @@ def main_worker(args):
 
 
     # Create loss, optimizer, lr_schedule and dice metrics
-    # loss_function = DiceLoss(to_onehot_y=True,
-    #                          softmax=True,  
-    #                          squared_pred=True, 
-    #                          smooth_nr=0, 
-    #                          smooth_dr=1e-5)
-    loss_function = GeneralizedDiceLoss(to_onehot_y=True,
+    loss_function = DiceLoss(to_onehot_y=True,
                              softmax=True,  
+                             squared_pred=True, 
                              smooth_nr=0, 
                              smooth_dr=1e-5)
+    # loss_function = GeneralizedDiceLoss(to_onehot_y=True,
+    #                          softmax=True,  
+    #                          smooth_nr=0, 
+    #                          smooth_dr=1e-5)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5, amsgrad=True)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
     dice_metric = DiceMetric(include_background=True, reduction="mean") 
@@ -299,6 +330,7 @@ def main_worker(args):
     best_metric_epoch = -1
     save_loss = []
     save_metric = []
+    metric = 0.0
 
     train_start = time.time()
     for epoch in range(args.epochs):
@@ -314,20 +346,20 @@ def main_worker(args):
         if (epoch + 1) % args.val_interval == 0:
             metric = evaluate(val_loader, model, dice_metric, pre_trans, post_trans, device)
             
-            # save metrics
-            save_metric.append(metric)
-            np.save(os.path.join(model_dir, 'metric_mean.npy'), save_metric)
+        # save metrics
+        save_metric.append(metric)
+        np.save(os.path.join(model_dir, 'metric_mean.npy'), save_metric)
 
-            # save model with best metric
-            if metric > best_metric:
-                best_metric = metric
-                best_metric_epoch = epoch + 1
-                torch.save(model.state_dict(), 
-                           os.path.join(model_dir, "best_metric_model.pth"))
-            print(
-                f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
-                f"\nbest mean dice: {best_metric:.4f} at epoch: {best_metric_epoch}"
-            )
+        # save model with best metric
+        if metric > best_metric:
+            best_metric = metric
+            best_metric_epoch = epoch + 1
+            torch.save(model.state_dict(), 
+                        os.path.join(model_dir, "best_metric_model.pth"))
+        print(
+            f"current epoch: {epoch + 1} current mean dice: {metric:.4f}"
+            f"\nbest mean dice: {best_metric:.4f} at epoch: {best_metric_epoch}"
+        )
     
         print(f"time consumed for epoch {epoch + 1} is: {(time.time() - epoch_start):.4f}")
 
@@ -345,17 +377,16 @@ Main
 """
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--data_dir", default="data/task_data", type=str, help="directory of Patient CT scans dataset")
-    parser.add_argument("-m", "--model_dir", default="data/task_results", type=str, help="directory of train results")
-    parser.add_argument("--epochs", default=500, type=int, metavar="N", help="number of total epochs to run")
-    parser.add_argument("--lr", default=1e-3, type=float, help="learning rate")
+    parser.add_argument("-d", "--data_dir", default="../task_data", type=str, help="directory of Patient CT scans dataset")
+    parser.add_argument("-m", "--model_dir", default="../task_results", type=str, help="directory of train results")
+    parser.add_argument("--epochs", default=800, type=int, metavar="N", help="number of total epochs to run")
+    parser.add_argument("--lr", default=1e-4, type=float, help="learning rate")
     parser.add_argument("--seed", default=None, type=int, help="seed for initializing training.")
     parser.add_argument("--cache_rate", type=float, default=0.0, help="larger cache rate relies on enough GPU memory.")
-    parser.add_argument("--val_interval", type=int, default=20)
-    parser.add_argument("--train_batch_size", type=int, default=1, help="training batch size for data loader.")
-    parser.add_argument("--val_batch_size", type=int, default=1, help="validation batch size for data loader.")
+    parser.add_argument("--val_interval", type=int, default=5)
     parser.add_argument("--network", type=str, default="SegResNet", choices=["ResUNet", "SegResNet", "UNet"])
     args = parser.parse_args()
+
 
     if args.seed is not None:
         set_determinism(seed=args.seed)
