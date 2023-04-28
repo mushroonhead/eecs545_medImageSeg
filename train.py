@@ -21,8 +21,8 @@ including the actual model itself and any metrics that have been used to quantif
 
 """
 
-data_dir = '../task_data'
-model_dir = '../task_results' 
+data_dir = 'data/task_data'
+model_dir = 'data/task_results' 
 
 """
 Step 2: prepare the data

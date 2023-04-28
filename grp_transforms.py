@@ -7,6 +7,7 @@ Stores all preprocessing transforms that the group have set up for easy access
 import torch
 from monai.config import KeysCollection
 from monai.transforms import(
+    Transform,
     MapTransform,
     Compose,
     AddChanneld,
@@ -54,6 +55,17 @@ class Roundd(MapTransform):
         for key in self.key_iterator(d):
             d[key] = torch.round(d[key])
         return d
+    
+class AccumulateOneHot(Transform):
+    def __init__(self, source_layer : int, target_layer : int) -> None:
+        super().__init__()
+        self.source_layer = source_layer
+        self.target_layer = target_layer
+
+    def __call__(self, data):
+        to_propagate = data[self.source_layer, ...] == 1
+        data[self.target_layer, to_propagate] = data[self.source_layer, to_propagate]
+        return data
 
 def default_transforms():
     """

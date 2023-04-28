@@ -16,7 +16,7 @@ from monai.networks.nets import SegResNet, UNet
 from monai.networks.layers import Norm
 from monai.data import DataLoader, CacheDataset, decollate_batch
 from monai.utils import set_determinism
-from monai.losses import DiceLoss
+from monai.losses import DiceLoss, GeneralizedDiceLoss
 from monai.metrics import DiceMetric
 from monai.inferers import sliding_window_inference
 from monai.transforms import(
@@ -29,11 +29,13 @@ from monai.transforms import(
     EnsureChannelFirstd,
     RandFlipd,
     RandSpatialCropd,
+    RandRotated,
     AsDiscrete,
     CropForegroundd,
-    Resized
+    Resized,
+    Activations
 )
-from grp_transforms import ForceSyncAffined
+from grp_transforms import ForceSyncAffined, Roundd
 
     
 """
@@ -50,7 +52,7 @@ Return:
     - labels: tensor multiclass of size (B,2,R,A,S)
 ------------------------------------------------------------------    
 """
-def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[128,128,64], cache_rate=0.0, train_batch_size=1, val_batch_size=1):
+def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size=[-1,-1,64], model_inp_size=[128,128,-1], cache_rate=0.0, train_batch_size=1, val_batch_size=1):
 
     path_train_volumes = sorted(glob(os.path.join(in_dir, "TrainVolumes_full", "*.nii.gz")))
     path_train_segmentation = sorted(glob(os.path.join(in_dir, "TrainLabels_full", "*.nii.gz")))
@@ -65,13 +67,17 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         LoadImaged(keys=["vol", "seg"]),
         ForceSyncAffined(keys=["seg"], source_key="vol"),
         EnsureChannelFirstd(keys=["vol", "seg"]),
+        ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True),
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
+        CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
         RandSpatialCropd(keys=["vol", "seg"], roi_size=roi_size, random_size=False),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=1, prob=0.5),
-        RandFlipd(keys=["vol", "seg"], spatial_axis=2, prob=0.5),
-        ScaleIntensityRanged(keys=["vol"], a_min=a_min, a_max=a_max, b_min=0.0, b_max=1.0, clip=True),
+        Resized(keys=["vol", "seg"], spatial_size=model_inp_size),
+        # RandFlipd(keys=["vol", "seg"], spatial_axis=0, prob=0.5),
+        # RandFlipd(keys=["vol", "seg"], spatial_axis=1, prob=0.5),
+        # RandFlipd(keys=["vol", "seg"], spatial_axis=2, prob=0.5),
+        RandRotated(keys=["vol", "seg"], range_x=0.3, prob=0.5),
+        Roundd(keys=["seg"]),
         ToTensord(keys=["vol", "seg"]),
         ])
 
@@ -83,14 +89,15 @@ def data_augment(in_dir, pixdim=(1.5, 1.5, 1.0), a_min=-200, a_max=200, roi_size
         Orientationd(keys=["vol", "seg"], axcodes="RAS"),
         CropForegroundd(keys=['vol', 'seg'], source_key='vol'),
         Spacingd(keys=["vol", "seg"], pixdim=pixdim, mode=("bilinear", "nearest")),
-        Resized(keys=["vol", "seg"], spatial_size=(roi_size[0],roi_size[1],-1)),
+        Resized(keys=["vol", "seg"], spatial_size=model_inp_size),
+        Roundd(keys=["seg"]),
         ToTensord(keys=["vol", "seg"]),
         ])
 
-    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=cache_rate)
+    train_ds = CacheDataset(data=train_files[28:56], transform=train_transforms, cache_rate=cache_rate)
     train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True)
 
-    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=cache_rate)
+    val_ds = CacheDataset(data=val_files[:4], transform=val_transforms, cache_rate=cache_rate)
     val_loader = DataLoader(val_ds, batch_size=val_batch_size)
 
     return train_loader, val_loader
@@ -266,16 +273,24 @@ def main_worker(args):
 
 
     # Create loss, optimizer, lr_schedule and dice metrics
-    loss_function = DiceLoss(to_onehot_y=True, 
-                             sigmoid=True, 
-                             squared_pred=True, 
+    # loss_function = DiceLoss(to_onehot_y=True,
+    #                          softmax=True,  
+    #                          squared_pred=True, 
+    #                          smooth_nr=0, 
+    #                          smooth_dr=1e-5)
+    loss_function = GeneralizedDiceLoss(to_onehot_y=True,
+                             softmax=True,  
                              smooth_nr=0, 
                              smooth_dr=1e-5)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5, amsgrad=True)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
     dice_metric = DiceMetric(include_background=True, reduction="mean") 
     # Transformation into one_hot with 3 columns for 2 class
-    post_trans = Compose([AsDiscrete(argmax=True, to_onehot=3)])
+    post_trans = Compose(
+    [
+        Activations(softmax=True),
+        AsDiscrete(argmax=True, to_onehot=3),
+    ])
     pre_trans = Compose([AsDiscrete(to_onehot=3)])
 
     
