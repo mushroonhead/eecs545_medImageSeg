@@ -30,8 +30,8 @@ git clone https://github.com/mushroonhead/eecs545_medImageSeg.git
 ```
 Then install the needed dependencies:<br>
 ```
-cd eecs545_medImageSeg/ <br>
-pip install -e '.[skimage]' <br>
+cd eecs545_medImageSeg
+pip install -e '.[skimage]'
 ```
 
 # Training & Inference
