@@ -1,13 +1,12 @@
 ######################################
 
-For members of EECS 545 group wondering how to start, please look through the following instructions and ask Joshua 
-for further assistence if required.
+For members of EECS 545 group wondering how to start, please look through the following instructions.
 
 ######################################
 
-In general, 3 main files are used for data preperation, training and testing
+In general, 3 main files are used for data preparation, training and testing
 
-File 1: data_preperation.ipynb
+File 1: data_preparation.ipynb
 - Assumes that you have gone through the youtube video https://www.youtube.com/watch?v=M3ZWfamWrBM
 - Basically, you will need to create folders to store DICOMM series data from NIFTI data
 - After creating the DICOMM series data, you will use the tool to subsegment the data into equal size TestVolumes

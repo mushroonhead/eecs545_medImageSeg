@@ -1,7 +1,7 @@
 File structure writeup
 
 -data/
-    # data preperation folders used in data_preperation.ipynb
+    # data preperation folders used in data_preparation.ipynb
     |-dicom_file/ # folder to hold dicomm series files transcribed from 3D Slicer software
         |-images/ # first folder holds dicomm serires from original CT scan that will be input to network
             |-liver_XX0/ # each dicomm series for each patient will be in a sperate folder (each folder needs to be manually created)

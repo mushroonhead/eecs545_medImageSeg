@@ -3,7 +3,7 @@ from monai.networks.layers import Norm
 from monai.losses import DiceLoss, DiceCELoss
 
 import torch
-from preporcess import prepare
+from eecs545_medImageSeg.preprocess import prepare
 from utilities import train
 
 """
